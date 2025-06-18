@@ -245,7 +245,7 @@ def get_cuda_devices(device_platform="Linux") -> DeviceCapabilities:
           multi_gpu_flops.int8 += gpu_flops.int8
         
       return DeviceCapabilities(
-        model=f"{device_platform} ({multi_gpu_name})",
+        model=f"{device_platform}",
         chip=multi_gpu_name,
         memory=multi_gpu_memory_info // 2**20,
         flops=multi_gpu_flops,
@@ -301,7 +301,7 @@ def get_cuda_devices(device_platform="Linux") -> DeviceCapabilities:
       logging.debug(f"Returning DeviceCapabilities with model={gpu_name}, memory={memory_mb}, flops={flops}")
     
       return DeviceCapabilities(
-        model=f"{device_platform} ({gpu_name})",
+        model=f"{device_platform}",
         chip=gpu_name,
         memory=memory_mb,
         flops=flops,
@@ -329,7 +329,7 @@ def get_amd_devices(device_platform="Linux") -> DeviceCapabilities:
   if DEBUG >= 2: logging.debug(f"AMD device {gpu_name=} {gpu_memory_info=}")
 
   return DeviceCapabilities(
-    model=f"{device_platform} ({gpu_name})",
+    model=f"{device_platform}",
     chip=gpu_name,
     memory=gpu_memory_info // 2**20,
     flops=CHIP_FLOPS.get(gpu_name, DeviceFlops(fp32=0, fp16=0, int8=0)),
