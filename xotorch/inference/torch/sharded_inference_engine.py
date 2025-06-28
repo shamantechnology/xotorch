@@ -244,7 +244,7 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
       print(f"input_data: {input_data}")
       print(f"state {self.state}")
 
-    if inference_state.get("tokens") is not None:
+    if inference_state is not None and inference_state.get("tokens") is not None:
       self.state.from_dict(inference_state)
 
     self.request_id = request_id if not self.request_id else self.request_id
@@ -343,13 +343,13 @@ class TorchDynamicShardInferenceEngine(InferenceEngine):
 
         if DEBUG >= 4:
           print("sending hidden states")
-          print(f"model_hs: {model_hs.size()}")
-          print(f"state.tokens: {self.state.tokens}")
-          print(f"state.input_pos: {self.state.input_pos.size()}")
-          print(f"state.mask: {self.state.mask.size()}")
+          print(f"model_hs: {model_hs.size()} {model_hs.dtype}")
+          print(f"state.tokens: {self.state.tokens} {self.state.tokens.dtype}")
+          print(f"state.input_pos: {self.state.input_pos.size()} {self.state.input_pos.dtype}")
+          print(f"state.mask: {self.state.mask.size()} {self.state.mask.dtype}")
         
         return (
-          model_hs.numpy(force=True),
+          model_hs.float().numpy(force=True),
           self.state.to_dict(),
         )
       
