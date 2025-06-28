@@ -3,6 +3,7 @@ Test inference engine and model sharding
 """
 import pytest
 import asyncio
+import time
 
 from xotorch.inference.shard import Shard
 from xotorch.inference.torch.sharded_inference_engine import TorchDynamicShardInferenceEngine
@@ -12,7 +13,7 @@ import numpy as np
 
 @pytest.mark.asyncio
 async def test_inference_engine():
-  prompt = "In a single word only, what is the last name of the current president of the USA?"
+  prompt = "Tell me a haiku in 10 words or less."
 
   shard = Shard(
     model_id="llama-3.2-1b",
@@ -30,10 +31,17 @@ async def test_inference_engine():
 
   inference_engine = TorchDynamicShardInferenceEngine(HFShardDownloader())
 
+  current_time = time.time()
+
   output_1 = await inference_engine.infer_prompt("test_id", shard, prompt)
   print("\n------------inference_engine.infer_prompt output---------------\n")
   print(output_1)
   print("\n---------------------------\n")
+
+  elapsed_time = time.time() - current_time
+  tokens_per_second = len(output_1) / elapsed_time
+  print(f"Time taken: {elapsed_time:.2f} seconds")
+  print(f"Tokens per second: {tokens_per_second:.2f}")  
 
   assert isinstance(output_1, np.ndarray), "Output should be numpy array"
 

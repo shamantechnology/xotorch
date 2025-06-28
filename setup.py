@@ -60,17 +60,10 @@ extras_require = {
     "torchtune>=0.6.1",
     "torchao>=0.11.0"
   ],
-  "torch-cuda": [
+  "torch-default": [
     "torch", 
     "torchvision", 
     "torchaudio",
-    "torchtune>=0.6.1",
-    "torchao>=0.11.0"
-  ],
-  "torch-cpu": [
-    "torch @ https://download.pytorch.org/whl/cpu",
-    "torchvision @ https://download.pytorch.org/whl/cpu",
-    "torchaudio @ https://download.pytorch.org/whl/cpu",
     "torchtune>=0.6.1",
     "torchao>=0.11.0"
   ]
@@ -144,18 +137,17 @@ def _pytorch_install():
         elif match_ver == "11.8":
           install_requires.extend(extras_require["torch-cuda118"])
         else:
-          install_requires.extend(extras_require["torch-cuda"])
+          install_requires.extend(extras_require["torch-default"])
       else:
-        install_requires.extend(extras_require["torch-cuda"])
+        install_requires.extend(extras_require["torch-default"])
     else:
       out = subprocess.run(['amd-smi', 'list', '--csv'], shell=True, text=True, capture_output=True, check=False)
       if out.returncode == 0:
         install_requires.extend(extras_require["torch-rocm63"])
       else:
-        install_requires.extend(extras_require["torch-cpu"])
+        install_requires.extend(extras_require["torch-default"])
   except Exception as err:
-    print(f"Error with subprocess for pytorch install, using CPU install: {err}")
-    install_requires.extend(extras_require["torch-cpu"])
+    install_requires.extend(extras_require["torch-default"])
 
 _pytorch_install()
 _add_gpu_requires()
