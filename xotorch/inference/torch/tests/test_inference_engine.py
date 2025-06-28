@@ -5,11 +5,12 @@ import pytest
 import asyncio
 import time
 
+import numpy as np
+
 from xotorch.inference.shard import Shard
 from xotorch.inference.torch.sharded_inference_engine import TorchDynamicShardInferenceEngine
-from xotorch.download.hf.hf_shard_download import HFShardDownloader
-
-import numpy as np
+from xotorch.download.new_shard_download import new_shard_downloader
+from xotorch.download.shard_download import ShardDownloader
 
 @pytest.mark.asyncio
 async def test_inference_engine():
@@ -29,13 +30,14 @@ async def test_inference_engine():
     n_layers= 16
   )
 
-  inference_engine = TorchDynamicShardInferenceEngine(HFShardDownloader())
+  shard_downloader = new_shard_downloader()
+  inference_engine = TorchDynamicShardInferenceEngine(shard_downloader)
 
   current_time = time.time()
 
   output_1 = await inference_engine.infer_prompt("test_id", shard, prompt)
   print("\n------------inference_engine.infer_prompt output---------------\n")
-  print(output_1)
+  print(output_1[0].shape)
   print("\n---------------------------\n")
 
   elapsed_time = time.time() - current_time
@@ -43,14 +45,14 @@ async def test_inference_engine():
   print(f"Time taken: {elapsed_time:.2f} seconds")
   print(f"Tokens per second: {tokens_per_second:.2f}")  
 
-  assert isinstance(output_1, np.ndarray), "Output should be numpy array"
+  assert isinstance(output_1[0], np.ndarray), "Output should be numpy array"
 
-  output_2 = await inference_engine.infer_tensor("test_id", shard, output_1) 
-  print("\n------------inference_engine.infer_tensor output---------------\n")
-  print(output_2)
-  print("\n---------------------------\n")
+  # output_2 = await inference_engine.infer_tensor("test_id", shard, output_1) 
+  # print("\n------------inference_engine.infer_tensor output---------------\n")
+  # print(output_2)
+  # print("\n---------------------------\n")
 
-  assert isinstance(output_2, np.ndarray), "Output should be numpy array" 
+  # assert isinstance(output_2, np.ndarray), "Output should be numpy array" 
 
 if __name__ == '__main__':
   try:

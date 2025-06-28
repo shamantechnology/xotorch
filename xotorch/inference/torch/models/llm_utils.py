@@ -364,6 +364,7 @@ class ShardTransformerDecoder(TransformerDecoder):
       if layer is not None:
         layer.reset_cache()
 
+  @torch.inference_mode()
   def forward(
     self,
     tokens: torch.Tensor,
@@ -465,6 +466,7 @@ class MultiLayerPreceptron(nn.Module):
     self.down_proj = nn.Linear(hidden_dim, input_dim, bias=use_bias)
     self.act_fn = activations[activation]
 
+  @torch.inference_mode()
   def forward(self, x) -> torch.Tensor:
     return self.down_proj(self.act_fn(self.gate_proj(x))*self.up_proj(x))
 
