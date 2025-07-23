@@ -141,6 +141,12 @@ model_cards = {
       "TorchDynamicShardInferenceEngine": "Qwen/Qwen2.5-32B-Instruct"
     },
   },
+  "qwen-3-32b": {
+    "layers": 64,
+    "repo": {
+      "TorchDynamicShardInferenceEngine": "unsloth/Qwen3-32B-unsloth-bnb-4bit"
+    },
+  },
   "qwen-2.5-coder-32b": {
     "layers": 64,
     "repo": {
