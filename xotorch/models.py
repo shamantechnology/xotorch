@@ -222,6 +222,7 @@ pretty_name = {
   "qwen-2.5-coder-32b": "Qwen 2.5 Coder 32B",
   "qwen-2.5-72b": "Qwen 2.5 72B",
   "qwen-2.5-math-72b": "Qwen 2.5 72B (Math)",
+  "qwen-3-32b": "Qwen 3 32B",
   "phi-4-mini-instruct": "Phi-4 Mini Instruct",
   "llama-3-8b": "Llama 3 8B",
   "llama-3-70b": "Llama 3 70B",
