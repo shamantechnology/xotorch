@@ -20,11 +20,19 @@ from xotorch.inference.shard import Shard
 
 # dtype string to dtype from huggingface type config.json
 HF_PRECISION_STR_TO_DTYPE: Dict[str, torch.dtype] = {
-    "float16": torch.float16,
-    "bfloat16": torch.bfloat16,
-    "float32": torch.float32,
-    "float64": torch.float64,
+  "float16": torch.float16,
+  "bfloat16": torch.bfloat16,
+  "float32": torch.float32,
+  "float64": torch.float64,
 }
+
+HF_PRECISION_DTYPE_TO_STR: Dict[torch.dtype, str] = {
+  torch.float16: "float16",
+  torch.bfloat16: "bfloat16",
+  torch.float32: "float32",
+  torch.float64: "float64",
+}
+
 
 
 def load_model_config(model_config_path: Path) -> dict:
