@@ -10,6 +10,8 @@ import numpy as np
 import torch
 import torchtune.generation as ttg
 import socket
+import json
+import struct
 
 from xotorch.helpers import DEBUG
 from xotorch.inference.shard import Shard
@@ -194,38 +196,40 @@ class CheetahInferenceEngine(InferenceEngine):
         tklng + self.sharded_model.max_generated_tokens
       )
 
+    if self.state.tokens is not None:
+      if input_data.ndim == 2 and input_tensor.size(-1) == 1:
+        self.state.tokens = torch.cat([
+          self.state.tokens.to(self.device),
+          input_tensor.clone()
+        ], dim=-1).to(self.device)
+    else:
+      self.state.tokens = input_tensor.clone()
+
+    tokens = self.state.tokens.clone()
+
+    input_pos = self.state.input_pos.clone()
+
+    mask = self.state.mask.clone()
+
+    curr_pos = self.state.curr_pos
+    if curr_pos > 0:
+      input_pos = input_pos[:, curr_pos].contiguous()
+      mask = mask[:, curr_pos, None, :].contiguous()
+    else:
+      _, tklng = tokens.size()
+      mask = mask[:, :tklng]
+
+    input_pos = input_pos[:, :tklng].squeeze()
+
+    self.cheetah_header["input_id_shape"] = list(tokens.shape)
+    self.cheetah_header["mask_shape"] = list(mask.shape)
+    self.cheetah_header["input_pos_shape"] = list(input_pos.shape)
+
     def infer_wrapper():
       if DEBUG >= 4:
-        print(f"infer_wrapper called [{self.oom_cnt} OOM]")
+        print(f"infer_wrapper called")
         print(f"self.state.tokens: {self.state.tokens}")
         print(f"hidden_state: {hidden_state}")
-
-      model_cache = self.sharded_model.model.caches_are_enabled()
-
-      if self.state.tokens is not None:
-        if input_data.ndim == 2 and input_tensor.size(-1) == 1:
-          self.state.tokens = torch.cat([
-            self.state.tokens.to(self.device),
-            input_tensor.clone()
-          ], dim=-1).to(self.device)
-      else:
-        self.state.tokens = input_tensor.clone()
-
-      tokens = self.state.tokens.clone()
-
-      input_pos = self.state.input_pos.clone()
-
-      mask = self.state.mask.clone()
-
-      curr_pos = self.state.curr_pos
-      if curr_pos > 0:
-        input_pos = input_pos[:, curr_pos].contiguous()
-        mask = mask[:, curr_pos, None, :].contiguous()
-      else:
-        _, tklng = tokens.size()
-        mask = mask[:, :tklng]
-
-      input_pos = input_pos[:, :tklng].squeeze()
 
       if hidden_state is not None:
         model_hs, model_logits = self.run_cheetah(
@@ -237,7 +241,6 @@ class CheetahInferenceEngine(InferenceEngine):
       else:
         model_hs, model_logits = self.run_cheetah(
           tokens=tokens,
-          hidden_state=hidden_state,
           input_pos=input_pos,
           mask=mask,
         )
@@ -318,18 +321,66 @@ class CheetahInferenceEngine(InferenceEngine):
       "dtype": "int64",
       "input_id_shape": [],
       "mask_shape": [],
-      "input_pos_shape": []
+      "input_pos_shape": [],
+      "has_hidden_state": False
     }
 
   def run_cheetah(
+    self,
     tokens: torch.Tensor,
-    hidden_state: torch.Tensor,
     input_pos: torch.Tensor,
-    mask: torch.Tensor
+    mask: torch.Tensor,
+    hidden_state: Optional[torch.Tensor] = None
   ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Send model data to model running on cheetah
     recieved model output (hidden values or logits)
     """
-    pass
+    # setup payload
+    if hidden_state is None:
+      payload = tokens.numpy(force=True).tobytes() + \
+                mask.numpy(force=True).tobytes() + \
+                input_pos.numpy(force=True).tobytes()
+    
+      # send header and payload
+      header_bytes = json.dumps(self.cheetah_header).encode("utf-8")
+      self.cheetah_sock.sendall(struct.pack("!I", len(header_bytes)))
+      self.cheetah_sock.sendall(header_bytes)
+      self.cheetah_sock.sendall(payload)
+    else:
+      self.hidden_state_header = {
+        "node_id": self.uuid,
+        "model": self.shard.model_id,
+        "model_path": str(self.model_path),
+        "layer_start": self.shard.start_layer,
+        "layer_end": self.shard.end_layer,
+        "layer_total": self.shard.n_layers,
+        "dtype": HF_PRECISION_DTYPE_TO_STR[hidden_state.dtype],
+        "hidden_state_shape": list(hidden_state.shape)
+      }
+
+      tmip_payload = tokens.numpy(force=True).tobytes() + \
+        mask.numpy(force=True).tobytes() + \
+        input_pos.numpy(force=True).tobytes()
+
+      self.cheetah_header["has_hidden_state"] = True
+
+      header_bytes = json.dumps(self.cheetah_header).encode("utf-8")
+      self.cheetah_sock.sendall(struct.pack("!I", len(header_bytes)))
+      self.cheetah_sock.sendall(header_bytes)
+      self.cheetah_sock.sendall(tmip_payload)
+
+      header_bytes = json.dumps(self.hidden_state_header).encode("utf-8")
+      if hidden_state.is_floating_point():
+        # send int payload then float payload       
+        hidden_payload = hidden_state.float().numpy(force=True).tobytes()
+        self.cheetah_sock.sendall(struct.pack("!f", len(header_bytes)))
+        self.cheetah_sock.sendall(header_bytes)
+        self.cheetah_sock.sendall(hidden_payload)
+      else:
+        hidden_payload = hidden_state.numpy(force=True).tobytes()
+        self.cheetah_sock.sendall(struct.pack("!I", len(header_bytes)))
+        self.cheetah_sock.sendall(header_bytes)
+        self.cheetah_sock.sendall(hidden_payload)
+
 
