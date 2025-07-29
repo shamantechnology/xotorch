@@ -1,26 +1,29 @@
 """
 Inference engine for Cheetah C++ implementation.
 """
+import os
+import time
 import functools
 from concurrent.futures import ThreadPoolExecutor
 from typing import Tuple, Optional
 import asyncio
 import uuid
-import numpy as np
-import torch
-import torchtune.generation as ttg
 import socket
 import json
 import struct
 import select
 
+import numpy as np
+import torch
+import torchtune.generation as ttg
+
 from xotorch.helpers import DEBUG
 from xotorch.inference.shard import Shard
 from xotorch.download.shard_download import ShardDownloader
 from xotorch.inference.inference_engine import InferenceEngine
+from xotorch.inference.tokenizers import _resolve_tokenizer
 from xotorch.inference.torch.models.llm_utils import (
   load_model_config,
-  load_model_weights_torchtune,
   ShardInferenceState,
   HF_PRECISION_DTYPE_TO_STR
 )
@@ -35,7 +38,7 @@ class CheetahInferenceEngine(InferenceEngine):
   def __init__(self, shard_downloader: ShardDownloader):
     self.shard = None
     self.shard_downloader = shard_downloader
-    self.cheetah_sock = None
+    self.cheetah_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     self.cheetah_header = {}
     self.request_id = None
     self.executor = ThreadPoolExecutor(max_workers=1)
@@ -43,6 +46,26 @@ class CheetahInferenceEngine(InferenceEngine):
     self.model_path = None
     self.model_config = None
     self.state = None
+
+    # device settings
+    if os.environ.get("TORCH_DEVICE"):
+      self.device = torch.device(os.environ["TORCH_DEVICE"])
+    elif torch.cuda.is_available():
+      self.device = torch.device("cuda")
+    elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
+      self.device = torch.device("mps")
+    else:
+      self.device = torch.device("cpu")
+
+    # rng setup for sampling
+    self.rng = torch.Generator(device=self.device)
+    self.rng.manual_seed(1234)
+
+    # max sequence length
+    if os.environ.get("XOTORCH_MAX_SEQ_LEN"):
+      self.max_seq_len = int(os.environ["XOTORCH_MAX_SEQ_LEN"])
+    else:
+      self.max_seq_len = self.model_config["max_seq_len"]
   
   async def encode(self, shard: Shard, prompt: str) -> np.ndarray:
     """
@@ -75,8 +98,8 @@ class CheetahInferenceEngine(InferenceEngine):
       self.state.tokens = tokens
 
       _, tklng = tokens.size()
-      max_seq_len = self.model_config["max_seq_len"]
-      total_response_length = tklng + max_seq_len
+
+      total_response_length = tklng + self.max_seq_len
 
       if hasattr(self.tokenizer, "pad_id"):
         pad_id = self.tokenizer.pad_id
@@ -96,13 +119,13 @@ class CheetahInferenceEngine(InferenceEngine):
           value=True,
         )
 
-        self.state.mask = ttg.get_causal_mask_from_padding_mask(padding_masks, target_seq_len=max_seq_len)
+        self.state.mask = ttg.get_causal_mask_from_padding_mask(padding_masks, target_seq_len=self.max_seq_len)
 
         self.state.input_pos = ttg.get_position_ids_from_padding_mask(padding_masks)
       else:
         self.state.mask = torch.tril(torch.ones(
           total_response_length,
-          max_seq_len,
+          self.max_seq_len,
           dtype=torch.bool,
           device=self.device,
         )).unsqueeze(0)
@@ -186,16 +209,8 @@ class CheetahInferenceEngine(InferenceEngine):
 
     if input_tensor is not None:
       bsz, tklng = input_tensor.size()
-      self.setup_cache(
-        bsz,
-        tklng + self.sharded_model.max_generated_tokens
-      )
     else:
       bsz, tklng = self.state.tokens.size()
-      self.setup_cache(
-        bsz,
-        tklng + self.sharded_model.max_generated_tokens
-      )
 
     if self.state.tokens is not None:
       if input_data.ndim == 2 and input_tensor.size(-1) == 1:
@@ -303,14 +318,16 @@ class CheetahInferenceEngine(InferenceEngine):
     self.state = ShardInferenceState()
 
     try:
-      self.cheetah_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-      self.cheetah_sock.connect("/run/cheetah_infra")
+      self.cheetah_sock.connect("/tmp/cheetah_infra")
     except Exception as err:
-      print(f"/run/cheetah_infra not found\n{err}")
+      print(f"/tmp/cheetah_infra not found\n{err}")
       raise
 
     self.model_path = await self.shard_downloader.ensure_shard(shard, self.__class__.__name__)
     self.model_config = load_model_config(self.model_path/"config.json")
+
+    # self.tokenizer = await _resolve_tokenizer(model_path)
+    self.tokenizer = await _resolve_tokenizer(self.model_path)
 
     self.cheetah_header = {
       "node_id": self.uuid,
@@ -325,6 +342,17 @@ class CheetahInferenceEngine(InferenceEngine):
       "input_pos_shape": [],
       "has_hidden_state": False
     }
+
+  def poll_cheetah(
+    self,
+  ):
+    print("Waiting for cheetah response...")
+    while True:
+      try:
+        data = self.cheetah_sock.recv(4)
+        return
+      except BlockingIOError:
+        time.sleep(10)
 
   def run_cheetah(
     self,
@@ -385,13 +413,7 @@ class CheetahInferenceEngine(InferenceEngine):
         self.cheetah_sock.sendall(hidden_payload)
 
     # wait for response
-    readable_sockets, _, _ = select.select([self.cheetah_sock], [], [], 0)
-    if not readable_sockets:
-      raise ConnectionError("No readable sockets available")
-    
-    print("Waiting for cheetah response...")
-    while self.cheetah_sock not in readable_sockets:
-      readable_sockets, _, _ = select.select([self.cheetah_sock], [], [], 0)
+    self.poll_cheetah()
     
     print("Cheetah response received")
     raw_len = self.cheetah_sock.recv(4)
