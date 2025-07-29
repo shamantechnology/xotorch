@@ -12,6 +12,7 @@ import torchtune.generation as ttg
 import socket
 import json
 import struct
+import select
 
 from xotorch.helpers import DEBUG
 from xotorch.inference.shard import Shard
@@ -247,7 +248,7 @@ class CheetahInferenceEngine(InferenceEngine):
 
       if model_hs is not None:
         return (
-          model_hs.float().numpy(force=True),
+          model_hs,
           self.state.to_dict(),
         )
       
@@ -257,7 +258,7 @@ class CheetahInferenceEngine(InferenceEngine):
         self.state.curr_pos += 1
 
       return (
-        model_logits[:, -1].float().numpy(force=True),
+        model_logits[:, -1],
         self.state.to_dict(),
       )
 
@@ -383,4 +384,45 @@ class CheetahInferenceEngine(InferenceEngine):
         self.cheetah_sock.sendall(header_bytes)
         self.cheetah_sock.sendall(hidden_payload)
 
+    # wait for response
+    readable_sockets, _, _ = select.select([self.cheetah_sock], [], [], 0)
+    if not readable_sockets:
+      raise ConnectionError("No readable sockets available")
+    
+    print("Waiting for cheetah response...")
+    while self.cheetah_sock not in readable_sockets:
+      readable_sockets, _, _ = select.select([self.cheetah_sock], [], [], 0)
+    
+    print("Cheetah response received")
+    raw_len = self.cheetah_sock.recv(4)
+    if not raw_len:
+        raise ConnectionError("Did not receive header length")
+    header_len = struct.unpack("!I", raw_len)[0]
 
+    header_data = self.cheetah_sock.recv(header_len)
+    header = json.loads(header_data.decode("utf-8"))
+    
+    if DEBUG >= 4:
+      print(f"header: {header}")
+
+    shape = header["shape"]
+    dtype = header["dtype"]
+
+    if dtype in ("float32", "float"):
+        np_dtype = np.float32
+    else:
+        raise ValueError(f"Unsupported dtype: {dtype}")
+
+    expected_bytes = np.prod(shape) * np.dtype(np_dtype).itemsize
+    data = b""
+    while len(data) < expected_bytes:
+        chunk = self.cheetah_sock.recv(expected_bytes - len(data))
+        if not chunk:
+            raise ConnectionError("Incomplete tensor data received")
+        data += chunk
+
+    out_tensor = np.frombuffer(data, dtype=np_dtype).reshape(shape)
+    if hidden_state is not None:
+      return out_tensor, None
+
+    return None, out_tensor
