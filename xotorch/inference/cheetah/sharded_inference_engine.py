@@ -39,6 +39,7 @@ class CheetahInferenceEngine(InferenceEngine):
     self.shard = None
     self.shard_downloader = shard_downloader
     self.cheetah_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    self.cheetah_sock.setblocking(False)
     self.cheetah_header = {}
     self.request_id = None
     self.executor = ThreadPoolExecutor(max_workers=1)
@@ -62,10 +63,8 @@ class CheetahInferenceEngine(InferenceEngine):
     self.rng.manual_seed(1234)
 
     # max sequence length
-    if os.environ.get("XOTORCH_MAX_SEQ_LEN"):
-      self.max_seq_len = int(os.environ["XOTORCH_MAX_SEQ_LEN"])
-    else:
-      self.max_seq_len = self.model_config["max_seq_len"]
+    self.max_seq_len = 1024
+    
   
   async def encode(self, shard: Shard, prompt: str) -> np.ndarray:
     """
@@ -236,48 +235,13 @@ class CheetahInferenceEngine(InferenceEngine):
       mask = mask[:, :tklng]
 
     input_pos = input_pos[:, :tklng].squeeze()
-
-    self.cheetah_header["input_id_shape"] = list(tokens.shape)
-    self.cheetah_header["mask_shape"] = list(mask.shape)
-    self.cheetah_header["input_pos_shape"] = list(input_pos.shape)
-
-    def infer_wrapper():
-      if DEBUG >= 4:
-        print(f"infer_wrapper called")
-        print(f"self.state.tokens: {self.state.tokens}")
-        print(f"hidden_state: {hidden_state}")
-
-      if hidden_state is not None:
-        model_hs, model_logits = self.run_cheetah(
-          tokens=tokens,
-          hidden_state=hidden_state,
-          input_pos=input_pos,
-          mask=mask,
-        )
-      else:
-        model_hs, model_logits = self.run_cheetah(
-          tokens=tokens,
-          input_pos=input_pos,
-          mask=mask,
-        )
-
-      if model_hs is not None:
-        return (
-          model_hs,
-          self.state.to_dict(),
-        )
-      
-      if self.state.curr_pos == 0:
-        self.state.curr_pos = self.state.tokens.size(-1)
-      else:
-        self.state.curr_pos += 1
-
-      return (
-        model_logits[:, -1],
-        self.state.to_dict(),
-      )
-
-    return await asyncio.get_running_loop().run_in_executor(self.executor, infer_wrapper)
+ 
+    return await self.run_cheetah(
+      tokens=tokens,
+      mask=mask,
+      input_pos=input_pos,
+      hidden_state=hidden_state
+    )
   
   async def load_checkpoint(self, shard: Shard, path: str):
       """
@@ -326,6 +290,11 @@ class CheetahInferenceEngine(InferenceEngine):
     self.model_path = await self.shard_downloader.ensure_shard(shard, self.__class__.__name__)
     self.model_config = load_model_config(self.model_path/"config.json")
 
+    if os.environ.get("XOTORCH_MAX_SEQ_LEN"):
+      self.max_seq_len = int(os.environ["XOTORCH_MAX_SEQ_LEN"])
+    else:
+      self.max_seq_len = self.model_config.get("max_seq_len", 1024)
+
     # self.tokenizer = await _resolve_tokenizer(model_path)
     self.tokenizer = await _resolve_tokenizer(self.model_path)
 
@@ -336,25 +305,16 @@ class CheetahInferenceEngine(InferenceEngine):
       "layer_start": shard.start_layer,
       "layer_end": shard.end_layer,
       "layer_total": shard.n_layers,
-      "dtype": "int64",
-      "input_id_shape": [],
+      "dtype_input_ids": "int64",
+      "dtype_mask": "uint8",
+      "dtype_input_pos": "int64",
+      "input_ids_shape": [],
       "mask_shape": [],
       "input_pos_shape": [],
       "has_hidden_state": False
     }
 
-  def poll_cheetah(
-    self,
-  ):
-    print("Waiting for cheetah response...")
-    while True:
-      try:
-        data = self.cheetah_sock.recv(4)
-        return
-      except BlockingIOError:
-        time.sleep(10)
-
-  def run_cheetah(
+  async def run_cheetah(
     self,
     tokens: torch.Tensor,
     input_pos: torch.Tensor,
@@ -364,18 +324,33 @@ class CheetahInferenceEngine(InferenceEngine):
     """
     Send model data to model running on cheetah
     recieved model output (hidden values or logits)
-    """
+    """ 
+    # get asyncio loop
+    loop = asyncio.get_running_loop()
+
+    # setup header
+    self.cheetah_header["input_ids_shape"] = list(tokens.shape)
+    self.cheetah_header["mask_shape"] = list(mask.shape)
+    self.cheetah_header["input_pos_shape"] = list(input_pos.shape)
+    self.cheetah_header["dtype_input_ids"] = HF_PRECISION_DTYPE_TO_STR[tokens.dtype]
+    self.cheetah_header["dtype_mask"] = HF_PRECISION_DTYPE_TO_STR[mask.dtype]
+    self.cheetah_header["dtype_input_pos"] = HF_PRECISION_DTYPE_TO_STR[input_pos.dtype]
+
     # setup payload
     if hidden_state is None:
+      print(f"{tokens.dtype=} {mask.dtype=} {input_pos.dtype=}")
       payload = tokens.numpy(force=True).tobytes() + \
-                mask.numpy(force=True).tobytes() + \
+                mask.numpy(force=True).astype(np.uint8).tobytes() + \
                 input_pos.numpy(force=True).tobytes()
+
+      print(f"payload size: {len(payload)} bytes")
     
       # send header and payload
       header_bytes = json.dumps(self.cheetah_header).encode("utf-8")
-      self.cheetah_sock.sendall(struct.pack("!I", len(header_bytes)))
-      self.cheetah_sock.sendall(header_bytes)
-      self.cheetah_sock.sendall(payload)
+
+      await loop.sock_sendall(self.cheetah_sock, struct.pack("!I", len(header_bytes)))
+      await loop.sock_sendall(self.cheetah_sock, header_bytes)
+      await loop.sock_sendall(self.cheetah_sock, payload)
     else:
       self.hidden_state_header = {
         "node_id": self.uuid,
@@ -389,39 +364,39 @@ class CheetahInferenceEngine(InferenceEngine):
       }
 
       tmip_payload = tokens.numpy(force=True).tobytes() + \
-        mask.numpy(force=True).tobytes() + \
+        mask.numpy(force=True).astype(np.uint8).tobytes() + \
         input_pos.numpy(force=True).tobytes()
 
       self.cheetah_header["has_hidden_state"] = True
 
       header_bytes = json.dumps(self.cheetah_header).encode("utf-8")
-      self.cheetah_sock.sendall(struct.pack("!I", len(header_bytes)))
-      self.cheetah_sock.sendall(header_bytes)
-      self.cheetah_sock.sendall(tmip_payload)
+      await loop.sock_sendall(self.cheetah_sock, struct.pack("!I", len(header_bytes)))
+      await loop.sock_sendall(self.cheetah_sock, header_bytes)
+      await loop.sock_sendall(self.cheetah_sock, tmip_payload)
 
       header_bytes = json.dumps(self.hidden_state_header).encode("utf-8")
       if hidden_state.is_floating_point():
         # send int payload then float payload       
         hidden_payload = hidden_state.float().numpy(force=True).tobytes()
-        self.cheetah_sock.sendall(struct.pack("!f", len(header_bytes)))
-        self.cheetah_sock.sendall(header_bytes)
-        self.cheetah_sock.sendall(hidden_payload)
+        await loop.sock_sendall(self.cheetah_sock, struct.pack("!f", len(header_bytes)))
+        await loop.sock_sendall(self.cheetah_sock, header_bytes)
+        await loop.sock_sendall(self.cheetah_sock, hidden_payload)
       else:
         hidden_payload = hidden_state.numpy(force=True).tobytes()
-        self.cheetah_sock.sendall(struct.pack("!I", len(header_bytes)))
-        self.cheetah_sock.sendall(header_bytes)
-        self.cheetah_sock.sendall(hidden_payload)
+        await loop.sock_sendall(self.cheetah_sock, struct.pack("!I", len(header_bytes)))
+        await loop.sock_sendall(self.cheetah_sock, header_bytes)
+        await loop.sock_sendall(self.cheetah_sock, hidden_payload)
 
     # wait for response
-    self.poll_cheetah()
+    print("Waiting for Cheetah response...")
+    raw_len = await loop.sock_recv(self.cheetah_sock, 4)
+    if not raw_len:
+      raise ConnectionError("Did not receive header length")
     
     print("Cheetah response received")
-    raw_len = self.cheetah_sock.recv(4)
-    if not raw_len:
-        raise ConnectionError("Did not receive header length")
     header_len = struct.unpack("!I", raw_len)[0]
 
-    header_data = self.cheetah_sock.recv(header_len)
+    header_data = await loop.sock_recv(self.cheetah_sock, header_len)
     header = json.loads(header_data.decode("utf-8"))
     
     if DEBUG >= 4:
@@ -436,15 +411,26 @@ class CheetahInferenceEngine(InferenceEngine):
         raise ValueError(f"Unsupported dtype: {dtype}")
 
     expected_bytes = np.prod(shape) * np.dtype(np_dtype).itemsize
-    data = b""
+    data = bytearray()
     while len(data) < expected_bytes:
-        chunk = self.cheetah_sock.recv(expected_bytes - len(data))
-        if not chunk:
-            raise ConnectionError("Incomplete tensor data received")
-        data += chunk
+      chunk = await loop.sock_recv(self.cheetah_sock, expected_bytes - len(data))
+      if not chunk:
+        raise ConnectionError("Incomplete tensor data received")
+      data += chunk
 
     out_tensor = np.frombuffer(data, dtype=np_dtype).reshape(shape)
     if hidden_state is not None:
-      return out_tensor, None
+      return (
+        out_tensor,
+        self.state.to_dict(),
+      )
 
-    return None, out_tensor
+    if self.state.curr_pos == 0:
+      self.state.curr_pos = self.state.tokens.size(-1)
+    else:
+      self.state.curr_pos += 1
+
+    return (
+      out_tensor[:, -1],
+      self.state.to_dict()
+    )
