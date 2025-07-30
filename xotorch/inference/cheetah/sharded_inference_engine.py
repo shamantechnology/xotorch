@@ -38,8 +38,7 @@ class CheetahInferenceEngine(InferenceEngine):
   def __init__(self, shard_downloader: ShardDownloader):
     self.shard = None
     self.shard_downloader = shard_downloader
-    self.cheetah_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    self.cheetah_sock.setblocking(False)
+    self.cheetah_sock = None
     self.cheetah_header = {}
     self.request_id = None
     self.executor = ThreadPoolExecutor(max_workers=1)
@@ -220,7 +219,7 @@ class CheetahInferenceEngine(InferenceEngine):
     else:
       self.state.tokens = input_tensor.clone()
 
-    tokens = self.state.tokens.clone()
+    tokens = input_tensor.clone()
 
     input_pos = self.state.input_pos.clone()
 
@@ -233,8 +232,7 @@ class CheetahInferenceEngine(InferenceEngine):
     else:
       _, tklng = tokens.size()
       mask = mask[:, :tklng]
-
-    input_pos = input_pos[:, :tklng].squeeze()
+      input_pos = input_pos[:, :tklng].squeeze()
  
     return await self.run_cheetah(
       tokens=tokens,
@@ -281,12 +279,6 @@ class CheetahInferenceEngine(InferenceEngine):
     self.shard = shard
     self.state = ShardInferenceState()
 
-    try:
-      self.cheetah_sock.connect("/tmp/cheetah_infra")
-    except Exception as err:
-      print(f"/tmp/cheetah_infra not found\n{err}")
-      raise
-
     self.model_path = await self.shard_downloader.ensure_shard(shard, self.__class__.__name__)
     self.model_config = load_model_config(self.model_path/"config.json")
 
@@ -324,7 +316,17 @@ class CheetahInferenceEngine(InferenceEngine):
     """
     Send model data to model running on cheetah
     recieved model output (hidden values or logits)
-    """ 
+    """
+    # setup connection
+    self.cheetah_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    self.cheetah_sock.setblocking(False)
+    try:
+      self.cheetah_sock.connect("/tmp/cheetah_infra")
+    except Exception as err:
+      print(f"/tmp/cheetah_infra not found\n{err}")
+      raise
+    print("Connected to cheetah service socket @ /tmp/cheetah_infra")
+
     # get asyncio loop
     loop = asyncio.get_running_loop()
 
