@@ -156,6 +156,7 @@ CHIP_FLOPS = {
   "AMD Radeon RX 7500": DeviceFlops(fp32=16.2*TFLOPS, fp16=32.4*TFLOPS, int8=64.8*TFLOPS),
   ### Qualcomm embedded chips: TODO
   "JETSON AGX ORIN 32GB": DeviceFlops(fp32=17.65*TFLOPS, fp16=35.3*TFLOPS, int8=70.6*TFLOPS),
+  "JETSON AGX ORIN 64GB": DeviceFlops(fp32=24.27*TFLOPS, fp16=48.54*TFLOPS, int8=97.09*TFLOPS),
 }
 CHIP_FLOPS.update({f"LAPTOP GPU {key}": value for key, value in CHIP_FLOPS.items()})
 CHIP_FLOPS.update({f"Laptop GPU {key}": value for key, value in CHIP_FLOPS.items()})
@@ -219,14 +220,14 @@ def get_cuda_devices(device_platform="Linux") -> DeviceCapabilities:
       for handle in range(num_gpus):
         gpu_raw_name = torch.cuda.get_device_name(handle).upper()
 
-        if "ORIN" in gpu_raw_name:
-          gpu_name = "JETSON AGX ORIN 32GB"
+        if "ORIN" in gpu_raw_name and device_platform != "Windows":
+          gpu_memory_info = get_jetson_device_meminfo()
+          if gpu_memory_info.total > 32 * 1024 * 1024 * 1024:
+            gpu_name = "JETSON AGX ORIN 64GB"
+          else:
+            gpu_name = "JETSON AGX ORIN 32GB"
         else:
           gpu_name = gpu_raw_name.rsplit(" ", 1)[0] if gpu_raw_name.endswith("GB") else gpu_raw_name
-
-        if gpu_raw_name == 'ORIN (NVGPU)' or "ORIN" in gpu_raw_name and device_platform != "Windows":
-          gpu_memory_info = get_jetson_device_meminfo()
-        else:  
           gpu_memory_info = torch.cuda.get_device_properties(handle).total_memory
         
         multi_gpu_memory_info += gpu_memory_info
@@ -235,7 +236,10 @@ def get_cuda_devices(device_platform="Linux") -> DeviceCapabilities:
         if gpu_name in CHIP_FLOPS:
           gpu_flops = CHIP_FLOPS.get(gpu_name)
         elif "ORIN" in gpu_raw_name:
-          gpu_flops = CHIP_FLOPS.get("JETSON AGX ORIN 32GB")
+          if gpu_memory_info.total > 32 * 1024 * 1024 * 1024:
+            gpu_flops = CHIP_FLOPS.get("JETSON AGX ORIN 64GB")
+          else:
+            gpu_flops = CHIP_FLOPS.get("JETSON AGX ORIN 32GB")
 
         logging.debug(f"[{gpu_name}] : {gpu_flops=}")
 
@@ -259,7 +263,11 @@ def get_cuda_devices(device_platform="Linux") -> DeviceCapabilities:
       
       # For Jetson AGX Orin 32GB, override the GPU name
       if "ORIN" in gpu_raw_name:
-        gpu_name = "JETSON AGX ORIN 32GB"
+        gpu_memory_info = get_jetson_device_meminfo()
+        if gpu_memory_info.total > 32 * 1024 * 1024 * 1024:
+          gpu_name = "JETSON AGX ORIN 64GB"
+        else:
+          gpu_name = "JETSON AGX ORIN 32GB"
         if DEBUG >= 1: print(f"Detected Jetson device: {gpu_raw_name} -> {gpu_name}")
       else:
         gpu_name = gpu_raw_name.rsplit(" ", 1)[0] if gpu_raw_name.endswith("GB") else gpu_raw_name
@@ -268,9 +276,8 @@ def get_cuda_devices(device_platform="Linux") -> DeviceCapabilities:
       logging.debug(f"Available CHIP_FLOPS keys: {list(CHIP_FLOPS.keys())}")
       
       # Special handling for Jetson devices
-      if gpu_raw_name == 'ORIN (NVGPU)' or "ORIN" in gpu_raw_name and device_platform != "Windows":
+      if "ORIN" in gpu_raw_name and device_platform != "Windows":
         logging.debug(f"Detected Jetson device: {gpu_raw_name}")
-        gpu_memory_info = get_jetson_device_meminfo()
         memory_mb = gpu_memory_info.total // 1000 // 1000  # Convert to MB
         logging.debug(f"Jetson memory info: {memory_mb} MB")
       else:
@@ -294,8 +301,13 @@ def get_cuda_devices(device_platform="Linux") -> DeviceCapabilities:
         
         # Try a direct assignment for Jetson
         if "ORIN" in gpu_raw_name:
-          logging.debug("Forcing JETSON AGX ORIN 32GB FLOPS values")
-          flops = CHIP_FLOPS.get("JETSON AGX ORIN 32GB")
+          gpu_memory_info = get_jetson_device_meminfo()
+          if gpu_memory_info.total > 32 * 1024 * 1024 * 1024:
+            logging.debug("Forcing JETSON AGX ORIN 64GB FLOPS values")
+            flops = CHIP_FLOPS.get("JETSON AGX ORIN 64GB")
+          else:
+            logging.debug("Forcing JETSON AGX ORIN 32GB FLOPS values")
+            flops = CHIP_FLOPS.get("JETSON AGX ORIN 32GB")
 
       # Log the final values being returned
       logging.debug(f"Returning DeviceCapabilities with model={gpu_name}, memory={memory_mb}, flops={flops}")
