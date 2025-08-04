@@ -297,12 +297,6 @@ class CheetahInferenceEngine(InferenceEngine):
       "layer_start": shard.start_layer,
       "layer_end": shard.end_layer,
       "layer_total": shard.n_layers,
-      "dtype_input_ids": "int64",
-      "dtype_mask": "uint8",
-      "dtype_input_pos": "int64",
-      "input_ids_shape": [],
-      "mask_shape": [],
-      "input_pos_shape": [],
       "has_hidden_state": False
     }
 
@@ -331,54 +325,32 @@ class CheetahInferenceEngine(InferenceEngine):
     loop = asyncio.get_running_loop()
 
     # setup header
-    self.cheetah_header["input_ids_shape"] = list(tokens.shape)
-    self.cheetah_header["mask_shape"] = list(mask.shape)
-    self.cheetah_header["input_pos_shape"] = list(input_pos.shape)
-    self.cheetah_header["dtype_input_ids"] = HF_PRECISION_DTYPE_TO_STR[tokens.dtype]
-    self.cheetah_header["dtype_mask"] = HF_PRECISION_DTYPE_TO_STR[mask.dtype]
-    self.cheetah_header["dtype_input_pos"] = HF_PRECISION_DTYPE_TO_STR[input_pos.dtype]
+    self.cheetah_header["session_id"] = self.request_id
+    if hidden_state is None:
+      # imi is input_ids, mask, input_pos
+      self.cheetah_header["input_ids_shape"] = list(tokens.shape)
+      self.cheetah_header["mask_shape"] = list(mask.shape)
+      self.cheetah_header["input_pos_shape"] = list(input_pos.shape)
+      self.cheetah_header["dtype_input_ids"] = HF_PRECISION_DTYPE_TO_STR[tokens.dtype]
+      self.cheetah_header["dtype_mask"] = HF_PRECISION_DTYPE_TO_STR[mask.dtype]
+      self.cheetah_header["dtype_input_pos"] = HF_PRECISION_DTYPE_TO_STR[input_pos.dtype]
+    else:
+      self.cheetah_header["hidden_state_dtype"] =  HF_PRECISION_DTYPE_TO_STR[hidden_state.dtype]
+      self.cheetah_header["hidden_state_shape"] = list(hidden_state.shape)
+      self.cheetah_header["has_hidden_state"] = True
 
     # setup payload
+    header_bytes = json.dumps(self.cheetah_header).encode("utf-8")
     if hidden_state is None:
-      print(f"{tokens.dtype=} {mask.dtype=} {input_pos.dtype=}")
       payload = tokens.numpy(force=True).tobytes() + \
                 mask.numpy(force=True).astype(np.uint8).tobytes() + \
                 input_pos.numpy(force=True).tobytes()
-
-      print(f"payload size: {len(payload)} bytes")
     
-      # send header and payload
-      header_bytes = json.dumps(self.cheetah_header).encode("utf-8")
-
       await loop.sock_sendall(self.cheetah_sock, struct.pack("!I", len(header_bytes)))
       await loop.sock_sendall(self.cheetah_sock, header_bytes)
       await loop.sock_sendall(self.cheetah_sock, payload)
     else:
-      self.hidden_state_header = {
-        "node_id": self.uuid,
-        "model": self.shard.model_id,
-        "model_path": str(self.model_path),
-        "layer_start": self.shard.start_layer,
-        "layer_end": self.shard.end_layer,
-        "layer_total": self.shard.n_layers,
-        "dtype": HF_PRECISION_DTYPE_TO_STR[hidden_state.dtype],
-        "hidden_state_shape": list(hidden_state.shape)
-      }
-
-      tmip_payload = tokens.numpy(force=True).tobytes() + \
-        mask.numpy(force=True).astype(np.uint8).tobytes() + \
-        input_pos.numpy(force=True).tobytes()
-
-      self.cheetah_header["has_hidden_state"] = True
-
-      header_bytes = json.dumps(self.cheetah_header).encode("utf-8")
-      await loop.sock_sendall(self.cheetah_sock, struct.pack("!I", len(header_bytes)))
-      await loop.sock_sendall(self.cheetah_sock, header_bytes)
-      await loop.sock_sendall(self.cheetah_sock, tmip_payload)
-
-      header_bytes = json.dumps(self.hidden_state_header).encode("utf-8")
-      if hidden_state.is_floating_point():
-        # send int payload then float payload       
+      if hidden_state.is_floating_point():    
         hidden_payload = hidden_state.float().numpy(force=True).tobytes()
         await loop.sock_sendall(self.cheetah_sock, struct.pack("!f", len(header_bytes)))
         await loop.sock_sendall(self.cheetah_sock, header_bytes)
