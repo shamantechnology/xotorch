@@ -63,6 +63,9 @@ class CheetahInferenceEngine(InferenceEngine):
 
     # max sequence length
     self.max_seq_len = 1024
+
+    # model token embed for sampling
+    self.tok_embeddings = None
     
   
   async def encode(self, shard: Shard, prompt: str) -> np.ndarray:
@@ -148,7 +151,21 @@ class CheetahInferenceEngine(InferenceEngine):
       logits = torch.tensor(x).to(self.device)
 
       def sample_wrapper():
-        tokens = ttg.sample(logits.clone(), temperature=temp, top_k=top_k)
+        q = torch.empty(
+          (
+            logits.size(0),
+            self.tok_embeddings.num_embeddings
+          ), 
+          device=logits.device).exponential_(1,
+          generator=self.rng
+        ).to(self.device)
+
+        tokens = ttg.sample(
+          logits.clone(),
+          temperature=temp,
+          top_k=top_k,
+          q=q
+        )
         
         if DEBUG >= 4:
           print(f"tokens: {tokens}")
@@ -290,6 +307,14 @@ class CheetahInferenceEngine(InferenceEngine):
     # self.tokenizer = await _resolve_tokenizer(model_path)
     self.tokenizer = await _resolve_tokenizer(self.model_path)
 
+    # utilize tok embed for sampling
+    self.tok_embeddings = torch.nn.Embedding(
+      num_embeddings=self.model_config["vocab_size"],
+      embedding_dim=self.model_config["embed_dim"],
+      device=self.device,
+      dtype=self.model_config["torch_dtype"]
+    )
+
     self.cheetah_header = {
       "node_id": self.uuid,
       "model": self.shard.model_id,
@@ -319,7 +344,9 @@ class CheetahInferenceEngine(InferenceEngine):
     except Exception as err:
       print(f"/tmp/cheetah_infra not found\n{err}")
       raise
-    print("Connected to cheetah service socket @ /tmp/cheetah_infra")
+
+    if DEBUG >= 4:
+      print("Connected to cheetah service socket @ /tmp/cheetah_infra")
 
     # get asyncio loop
     loop = asyncio.get_running_loop()
@@ -362,19 +389,23 @@ class CheetahInferenceEngine(InferenceEngine):
         await loop.sock_sendall(self.cheetah_sock, hidden_payload)
 
     # wait for response
-    print("Waiting for Cheetah response...")
+    if DEBUG >= 4:
+      print("Waiting for Cheetah response...")
+    
     raw_len = await loop.sock_recv(self.cheetah_sock, 4)
     if not raw_len:
       raise ConnectionError("Did not receive header length")
     
-    print("Cheetah response received")
+    if DEBUG >= 4:
+      print("Cheetah response received")
+    
     header_len = struct.unpack("!I", raw_len)[0]
 
     header_data = await loop.sock_recv(self.cheetah_sock, header_len)
     header = json.loads(header_data.decode("utf-8"))
     
     if DEBUG >= 4:
-      print(f"header: {header}")
+      print(f"RECV Cheetah header: {header}")
 
     shape = header["shape"]
     dtype = header["dtype"]
