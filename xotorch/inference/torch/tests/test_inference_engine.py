@@ -17,14 +17,14 @@ async def test_inference_engine():
   prompt = "Tell me a haiku in 10 words or less."
 
   shard = Shard(
-    model_id="unsloth/Llama-3.2-1B-Instruct",
+    model_id="llama-3.2-1b",
     start_layer=0,
     end_layer=8,
     n_layers=16
   )
 
   shard_2 = Shard(
-    model_id="unsloth/Llama-3.2-1B-Instruct",
+    model_id="llama-3.2-1b",
     start_layer=9,
     end_layer=15,
     n_layers= 16
@@ -32,10 +32,10 @@ async def test_inference_engine():
 
   shard_downloader = new_shard_downloader()
   inference_engine = TorchDynamicShardInferenceEngine(shard_downloader)
-
   current_time = time.time()
 
   output_1 = await inference_engine.infer_prompt("test_id", shard, prompt)
+  print(f"{inference_engine.sharded_model=}")
   print("\n------------inference_engine.infer_prompt output---------------\n")
   print(output_1[0].shape)
   print("\n---------------------------\n")

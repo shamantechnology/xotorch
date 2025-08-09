@@ -488,36 +488,59 @@ class ShardTransformerDecoder(TransformerDecoder):
 
       return hidden[-1]
 
-class MultiLayerPreceptron(nn.Module):
-  def __init__(self, input_dim, hidden_dim, activation="silu", use_bias=False):
+def layer_mlp(dim: int, hidden_dim: int) -> FeedForward:
+  """
+  Generalized MLP layer
+  Ref: https://github.com/pytorch/torchtune/blob/main/torchtune/models/llama3_1/_component_builders.py#L124
+  Ref: https://github.com/pytorch/torchtune/blob/main/torchtune/models/qwen2/_component_builders.py#L127C1-L134C82
+  """
+  gate_proj = nn.Linear(dim, hidden_dim, bias=False)
+  down_proj = nn.Linear(hidden_dim, dim, bias=False)
+  up_proj = nn.Linear(dim, hidden_dim, bias=False)
+  return FeedForward(gate_proj=gate_proj, down_proj=down_proj, up_proj=up_proj)
+
+def moe_expert(
+  num_local_experts: int,
+  intermediate_dim: int,
+) -> FeedForward:
+  """
+  Expert layer for Mixture of Experts (MoE) model.
+  """
+  down_proj = nn.Linear(num_local_experts, intermediate_dim, bias=False)
+  pass
+
+class MoE(nn.Module):
+  def __init__(
+    self,
+    num_experts_per_tok: int,
+    num_local_experts: int,
+    output_router_logits: bool,
+    use_bias: bool,
+    swiglu_limit: float,
+    input_dim: int,
+    hidden_dim: int
+  ):
     """
-    General MLP (Multi-Layer Perceptron) module.
-
-    Args:
-      input_dim (int): Dimensionality of the input.
-      hidden_dims (int): Hidden layer/intermediate dimensions.
-      output_dim (int): Dimensionality of the output.
-      activation (str): Activation function ('relu', 'gelu', 'tanh', 'sigmoid', etc.).
-      use_bias (bool): Use bias with linearization
+    Mixture of Experts (MoE) layer.
     """
-    super(MultiLayerPreceptron, self).__init__()
+    super(MoE, self).__init__()
 
-    # Activation function mapping
-    activations = {"relu": nn.ReLU(), "gelu": nn.GELU(), "tanh": nn.Tanh(), "sigmoid": nn.Sigmoid(), "leaky_relu": nn.LeakyReLU(0.2), "silu": nn.SiLU()}
+    self.num_experts_per_tok = num_experts_per_tok
+    self.num_local_experts = num_local_experts
+    self.output_router_logits = output_router_logits
+    self.use_bias = use_bias
+    self.swiglu_limit = swiglu_limit
+    self.input_dim = input_dim
+    self.hidden_dim = hidden_dim
 
-    # Ensure valid activation
-    if activation not in activations:
-      raise ValueError(f"Invalid activation: {activation}. Choose from {list(activations.keys())}")
-
-    # Construct MLP layers
-    self.gate_proj = nn.Linear(input_dim, hidden_dim, bias=use_bias)
-    self.up_proj = nn.Linear(input_dim, hidden_dim, bias=use_bias)
-    self.down_proj = nn.Linear(hidden_dim, input_dim, bias=use_bias)
-    self.act_fn = activations[activation]
 
   @torch.inference_mode()
-  def forward(self, x) -> torch.Tensor:
-    return self.down_proj(self.act_fn(self.gate_proj(x))*self.up_proj(x))
+  def forward(self, x: torch.Tensor) -> torch.Tensor:
+    """
+    Forward pass through the MoE layer.
+    """
+    pass
+    
 
 class ShardInferenceState:
   def __init__(
@@ -559,13 +582,3 @@ class ShardInferenceState:
     curr_pos: {self.curr_pos}
     """
 
-def layer_mlp(dim: int, hidden_dim: int) -> FeedForward:
-  """
-  Generalized MLP layer
-  Ref: https://github.com/pytorch/torchtune/blob/main/torchtune/models/llama3_1/_component_builders.py#L124
-  Ref: https://github.com/pytorch/torchtune/blob/main/torchtune/models/qwen2/_component_builders.py#L127C1-L134C82
-  """
-  gate_proj = nn.Linear(dim, hidden_dim, bias=False)
-  down_proj = nn.Linear(hidden_dim, dim, bias=False)
-  up_proj = nn.Linear(dim, hidden_dim, bias=False)
-  return FeedForward(gate_proj=gate_proj, down_proj=down_proj, up_proj=up_proj)

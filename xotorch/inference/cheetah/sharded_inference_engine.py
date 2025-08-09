@@ -410,12 +410,16 @@ class CheetahInferenceEngine(InferenceEngine):
     shape = header["shape"]
     dtype = header["dtype"]
 
-    if dtype in ("float32", "float"):
+    if dtype == "bfloat16":
+        bytes_per_element = 2
+        np_dtype = np.uint16
+    elif dtype in ("float32", "float"):
+        bytes_per_element = 4
         np_dtype = np.float32
     else:
         raise ValueError(f"Unsupported dtype: {dtype}")
 
-    expected_bytes = np.prod(shape) * np.dtype(np_dtype).itemsize
+    expected_bytes = np.prod(shape) * bytes_per_element
     data = bytearray()
     while len(data) < expected_bytes:
       chunk = await loop.sock_recv(self.cheetah_sock, expected_bytes - len(data))
@@ -423,7 +427,13 @@ class CheetahInferenceEngine(InferenceEngine):
         raise ConnectionError("Incomplete tensor data received")
       data += chunk
 
-    out_tensor = np.frombuffer(data, dtype=np_dtype).reshape(shape)
+    if dtype == "bfloat16":
+      bfloat16_data = np.frombuffer(data, dtype=np.uint16).reshape(shape)
+      float32_bits = bfloat16_data.astype(np.uint32) << 16
+      out_tensor = float32_bits.view(np.float32)
+    else:
+      out_tensor = np.frombuffer(data, dtype=np_dtype).reshape(shape)
+
     if hidden_state is not None:
       return (
         out_tensor,
