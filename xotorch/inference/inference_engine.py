@@ -53,7 +53,8 @@ class InferenceEngine(ABC):
 
 inference_engine_classes = {
   "dummy": "DummyInferenceEngine",
-  "torch": "TorchDynamicShardInferenceEngine"
+  "torch": "TorchDynamicShardInferenceEngine",
+  "cheetah": "CheetahInferenceEngine",
 }
 
 
@@ -67,4 +68,7 @@ def get_inference_engine(inference_engine_name: str, shard_downloader: ShardDown
   elif inference_engine_name == "dummy":
     from xotorch.inference.dummy_inference_engine import DummyInferenceEngine
     return DummyInferenceEngine()
+  elif inference_engine_name == "cheetah":
+    from xotorch.inference.cheetah.sharded_inference_engine import CheetahInferenceEngine
+    return CheetahInferenceEngine(shard_downloader)
   raise ValueError(f"Unsupported inference engine: {inference_engine_name}")

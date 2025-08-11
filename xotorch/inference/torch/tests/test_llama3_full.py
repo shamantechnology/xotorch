@@ -5,6 +5,7 @@ full layer run
 
 from pathlib import Path
 import torch
+import time
 from huggingface_hub import snapshot_download
 
 import torchtune.generation as ttg
@@ -111,6 +112,8 @@ def main(model, prompt: str, device: torch.device = torch.device("cpu"), dtype: 
     print(f"init input_pos: {input_pos}")
 
   curr_pos = 0
+
+  current_time = time.time()
 
   _, logits = model.generate(
     tokens=tokens,

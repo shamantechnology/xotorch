@@ -8,9 +8,8 @@ import time
 import numpy as np
 
 from xotorch.inference.shard import Shard
-from xotorch.inference.torch.sharded_inference_engine import TorchDynamicShardInferenceEngine
+from xotorch.inference.cheetah.sharded_inference_engine import CheetahInferenceEngine
 from xotorch.download.new_shard_download import new_shard_downloader
-from xotorch.download.shard_download import ShardDownloader
 
 @pytest.mark.asyncio
 async def test_inference_engine():
@@ -27,15 +26,15 @@ async def test_inference_engine():
     model_id="llama-3.2-1b",
     start_layer=9,
     end_layer=15,
-    n_layers= 16
+    n_layers=16
   )
 
   shard_downloader = new_shard_downloader()
-  inference_engine = TorchDynamicShardInferenceEngine(shard_downloader)
+  inference_engine = CheetahInferenceEngine(shard_downloader)
+
   current_time = time.time()
 
   output_1 = await inference_engine.infer_prompt("test_id", shard, prompt)
-  print(f"{inference_engine.sharded_model=}")
   print("\n------------inference_engine.infer_prompt output---------------\n")
   print(output_1[0].shape)
   print("\n---------------------------\n")
@@ -47,12 +46,6 @@ async def test_inference_engine():
 
   assert isinstance(output_1[0], np.ndarray), "Output should be numpy array"
 
-  # output_2 = await inference_engine.infer_tensor("test_id", shard, output_1) 
-  # print("\n------------inference_engine.infer_tensor output---------------\n")
-  # print(output_2)
-  # print("\n---------------------------\n")
-
-  # assert isinstance(output_2, np.ndarray), "Output should be numpy array" 
 
 if __name__ == '__main__':
   try:
@@ -60,5 +53,3 @@ if __name__ == '__main__':
     asyncio.run(test_inference_engine())
   except Exception as err:
     print(f"\n!!!! TEST FAILED \n{err}\n")
-
-

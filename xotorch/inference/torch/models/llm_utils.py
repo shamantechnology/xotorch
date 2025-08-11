@@ -20,11 +20,60 @@ from xotorch.inference.shard import Shard
 
 # dtype string to dtype from huggingface type config.json
 HF_PRECISION_STR_TO_DTYPE: Dict[str, torch.dtype] = {
-    "float16": torch.float16,
-    "bfloat16": torch.bfloat16,
-    "float32": torch.float32,
-    "float64": torch.float64,
+  "float16": torch.float16,
+  "bfloat16": torch.bfloat16,
+  "float32": torch.float32,
+  "float64": torch.float64,
+  "int8": torch.int8,
+  "int16": torch.int16,
+  "int32": torch.int32,
+  "int64": torch.int64,
+  "uint8": torch.uint8,
+  "uint16": torch.uint16,
+  "uint32": torch.uint32,
+  "uint64": torch.uint64,
+  "bool": torch.bool,
+  "complex64": torch.complex64,
+  "complex128": torch.complex128,
+  "half": torch.float16,
+  "bfloat16": torch.bfloat16,
+  "float": torch.float32,
+  "double": torch.float64,
+  "long": torch.int64,
+  "int": torch.int32,
+  "short": torch.int16,
+  "byte": torch.uint8,
+  "char": torch.int8,
+  "qint8": torch.qint8,
+  "quint8": torch.quint8,
+  "float8_e5m2": torch.float8_e5m2,
+  "float8_e4m3fn": torch.float8_e4m3fn,
+  "float8_e4m3fnuz": torch.float8_e4m3fnuz,
+  "float8_e5m2fnuz": torch.float8_e5m2fnuz
 }
+
+HF_PRECISION_DTYPE_TO_STR: Dict[torch.dtype, str] = {
+  torch.float16: "float16",
+  torch.bfloat16: "bfloat16",
+  torch.float32: "float32",
+  torch.float64: "float64",
+  torch.int8: "int8",
+  torch.int16: "int16",
+  torch.int32: "int32",
+  torch.int64: "int64",
+  torch.uint8: "uint8",
+  torch.uint16: "uint16",
+  torch.uint32: "uint32",
+  torch.uint64: "uint64",
+  torch.bool: "bool",
+  torch.complex64: "complex64",
+  torch.complex128: "complex128",
+  torch.float8_e5m2: "float8_e5m2",
+  torch.float8_e4m3fn: "float8_e4m3fn",
+  torch.float8_e4m3fnuz: "float8_e4m3fnuz",
+  torch.float8_e5m2fnuz: "float8_e5m2fnuz"
+}
+
 
 
 def load_model_config(model_config_path: Path) -> dict:
@@ -439,36 +488,107 @@ class ShardTransformerDecoder(TransformerDecoder):
 
       return hidden[-1]
 
-class MultiLayerPreceptron(nn.Module):
-  def __init__(self, input_dim, hidden_dim, activation="silu", use_bias=False):
+def layer_mlp(dim: int, hidden_dim: int) -> FeedForward:
+  """
+  Generalized MLP layer
+  Ref: https://github.com/pytorch/torchtune/blob/main/torchtune/models/llama3_1/_component_builders.py#L124
+  Ref: https://github.com/pytorch/torchtune/blob/main/torchtune/models/qwen2/_component_builders.py#L127C1-L134C82
+  """
+  gate_proj = nn.Linear(dim, hidden_dim, bias=False)
+  down_proj = nn.Linear(hidden_dim, dim, bias=False)
+  up_proj = nn.Linear(dim, hidden_dim, bias=False)
+  return FeedForward(gate_proj=gate_proj, down_proj=down_proj, up_proj=up_proj)
+
+class MOEExpert(nn.Module):
+  """
+  Mixture of Experts (MoE) expert layer.
+  Using an MLP structure
+  """
+  def __init__(
+    self,
+    head_dim: int,
+    hidden_dim: int,
+    dim: int = 0,
+    variant: str = "openai"
+  ):
+    super(MOEExpert, self).__init__()
+    
+    self.variant = variant
+    self.head_dim = head_dim
+    self.hidden_dim = hidden_dim
+    self.dim = dim
+
+    if self.variant == "openai":
+      self.dim = self.head_dim // 2
+      self.down_proj = nn.Linear(
+        self.dim,
+        self.hidden_dim,
+        bias=False
+      )
+      self.gate_up_proj = nn.Linear(
+        self.dim,
+        2*self.hidden_dim,
+        bias=False
+      )
+    else:
+      self.gate_proj = nn.Linear(self.dim, self.hidden_dim, bias=False)
+      self.down_proj = nn.Linear(self.hidden_dim, self.dim, bias=False)
+      self.up_proj = nn.Linear(self.dim, self.hidden_dim, bias=False)
+
+  def forward(self, x: torch.Tensor) -> torch.Tensor:
     """
-    General MLP (Multi-Layer Perceptron) module.
-
-    Args:
-      input_dim (int): Dimensionality of the input.
-      hidden_dims (int): Hidden layer/intermediate dimensions.
-      output_dim (int): Dimensionality of the output.
-      activation (str): Activation function ('relu', 'gelu', 'tanh', 'sigmoid', etc.).
-      use_bias (bool): Use bias with linearization
+    Forward pass through the expert layer.
     """
-    super(MultiLayerPreceptron, self).__init__()
+    if self.variant == "openai":
+      gate_up_proj = self.gate_up_proj(x)
+      gate_proj = gate_up_proj[:, self.intermiedate_dim:]
+      up_proj = gate_up_proj[:, :self.intermediate_dim]
+      return self.down_proj(
+        torch.nn.functional.silu(gate_proj) * up_proj
+      )
+    else:
+      return self.down_proj(
+        torch.nn.functional.silu(self.gate_proj(x)) * self.up_proj(x)
+      )
 
-    # Activation function mapping
-    activations = {"relu": nn.ReLU(), "gelu": nn.GELU(), "tanh": nn.Tanh(), "sigmoid": nn.Sigmoid(), "leaky_relu": nn.LeakyReLU(0.2), "silu": nn.SiLU()}
+class MOELayer(nn.Module):
+  def __init__(
+    self,
+    head_dim: int,
+    hidden_dim: int,
+    dim: int = 0,
+    variant: str = "openai"
+  ):
+    """
+    Mixture of Experts (MoE) layer.
+    """
+    super(MOELayer, self).__init__()
 
-    # Ensure valid activation
-    if activation not in activations:
-      raise ValueError(f"Invalid activation: {activation}. Choose from {list(activations.keys())}")
+    self.head_dim = head_dim
+    self.hidden_dim = hidden_dim
+    self.dim = dim
+    self.variant = variant
 
-    # Construct MLP layers
-    self.gate_proj = nn.Linear(input_dim, hidden_dim, bias=use_bias)
-    self.up_proj = nn.Linear(input_dim, hidden_dim, bias=use_bias)
-    self.down_proj = nn.Linear(hidden_dim, input_dim, bias=use_bias)
-    self.act_fn = activations[activation]
+    self.expert = MOEExpert(
+      head_dim=self.head_dim,
+      hidden_dim=self.hidden_dim,
+      dim=self.dim,
+      variant=self.variant
+    )
+
+    self.router = layer_mlp(
+      dim=self.dim,
+      hidden_dim=self.hidden_dim
+    )
 
   @torch.inference_mode()
-  def forward(self, x) -> torch.Tensor:
-    return self.down_proj(self.act_fn(self.gate_proj(x))*self.up_proj(x))
+  def forward(self, x: torch.Tensor) -> torch.Tensor:
+    """
+    Forward pass through the MoE layer.
+    """
+    out_expert = self.expert(x)
+    return self.router(out_expert)
+    
 
 class ShardInferenceState:
   def __init__(
@@ -510,13 +630,3 @@ class ShardInferenceState:
     curr_pos: {self.curr_pos}
     """
 
-def layer_mlp(dim: int, hidden_dim: int) -> FeedForward:
-  """
-  Generalized MLP layer
-  Ref: https://github.com/pytorch/torchtune/blob/main/torchtune/models/llama3_1/_component_builders.py#L124
-  Ref: https://github.com/pytorch/torchtune/blob/main/torchtune/models/qwen2/_component_builders.py#L127C1-L134C82
-  """
-  gate_proj = nn.Linear(dim, hidden_dim, bias=False)
-  down_proj = nn.Linear(hidden_dim, dim, bias=False)
-  up_proj = nn.Linear(dim, hidden_dim, bias=False)
-  return FeedForward(gate_proj=gate_proj, down_proj=down_proj, up_proj=up_proj)

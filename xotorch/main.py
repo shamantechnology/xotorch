@@ -107,8 +107,8 @@ parser.add_argument("--interface-type-filter", type=str, default=None, help="Com
 parser.add_argument("--system-prompt", type=str, default=None, help="System prompt for the ChatGPT API")
 args = parser.parse_args()
 
-if args.inference_engine != "dummy" and args.inference_engine != "torch":
-  args.inference_engine = "torch"
+# if args.inference_engine != "dummy" and args.inference_engine != "torch":
+#   args.inference_engine = "torch"
 
 print(f"Selected inference engine: {args.inference_engine}")
 

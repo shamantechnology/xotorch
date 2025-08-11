@@ -12,7 +12,8 @@ model_cards = {
   "llama-3.2-1b": {
     "layers": 16,
     "repo": {
-      "TorchDynamicShardInferenceEngine": "unsloth/Llama-3.2-1B-Instruct"
+      "TorchDynamicShardInferenceEngine": "unsloth/Llama-3.2-1B-Instruct",
+      "CheetahInferenceEngine": "unsloth/Llama-3.2-1B-Instruct",
     },
   },
   "llama-3.2-3b": {

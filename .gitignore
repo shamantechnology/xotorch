@@ -180,3 +180,5 @@ xotorch/tinychat/images/*.png
 build/
 
 logs/
+lowlevel/libs/
+lowlevel/models/
