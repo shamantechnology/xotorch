@@ -499,47 +499,95 @@ def layer_mlp(dim: int, hidden_dim: int) -> FeedForward:
   up_proj = nn.Linear(dim, hidden_dim, bias=False)
   return FeedForward(gate_proj=gate_proj, down_proj=down_proj, up_proj=up_proj)
 
-def moe_expert(
-  num_local_experts: int,
-  intermediate_dim: int,
-) -> FeedForward:
+class MOEExpert(nn.Module):
   """
-  Expert layer for Mixture of Experts (MoE) model.
+  Mixture of Experts (MoE) expert layer.
+  Using an MLP structure
   """
-  down_proj = nn.Linear(num_local_experts, intermediate_dim, bias=False)
-  pass
-
-class MoE(nn.Module):
   def __init__(
     self,
-    num_experts_per_tok: int,
-    num_local_experts: int,
-    output_router_logits: bool,
-    use_bias: bool,
-    swiglu_limit: float,
-    input_dim: int,
-    hidden_dim: int
+    head_dim: int,
+    hidden_dim: int,
+    dim: int = 0,
+    variant: str = "openai"
+  ):
+    super(MOEExpert, self).__init__()
+    
+    self.variant = variant
+    self.head_dim = head_dim
+    self.hidden_dim = hidden_dim
+    self.dim = dim
+
+    if self.variant == "openai":
+      self.dim = self.head_dim // 2
+      self.down_proj = nn.Linear(
+        self.dim,
+        self.hidden_dim,
+        bias=False
+      )
+      self.gate_up_proj = nn.Linear(
+        self.dim,
+        2*self.hidden_dim,
+        bias=False
+      )
+    else:
+      self.gate_proj = nn.Linear(self.dim, self.hidden_dim, bias=False)
+      self.down_proj = nn.Linear(self.hidden_dim, self.dim, bias=False)
+      self.up_proj = nn.Linear(self.dim, self.hidden_dim, bias=False)
+
+  def forward(self, x: torch.Tensor) -> torch.Tensor:
+    """
+    Forward pass through the expert layer.
+    """
+    if self.variant == "openai":
+      gate_up_proj = self.gate_up_proj(x)
+      gate_proj = gate_up_proj[:, self.intermiedate_dim:]
+      up_proj = gate_up_proj[:, :self.intermediate_dim]
+      return self.down_proj(
+        torch.nn.functional.silu(gate_proj) * up_proj
+      )
+    else:
+      return self.down_proj(
+        torch.nn.functional.silu(self.gate_proj(x)) * self.up_proj(x)
+      )
+
+class MOELayer(nn.Module):
+  def __init__(
+    self,
+    head_dim: int,
+    hidden_dim: int,
+    dim: int = 0,
+    variant: str = "openai"
   ):
     """
     Mixture of Experts (MoE) layer.
     """
-    super(MoE, self).__init__()
+    super(MOELayer, self).__init__()
 
-    self.num_experts_per_tok = num_experts_per_tok
-    self.num_local_experts = num_local_experts
-    self.output_router_logits = output_router_logits
-    self.use_bias = use_bias
-    self.swiglu_limit = swiglu_limit
-    self.input_dim = input_dim
+    self.head_dim = head_dim
     self.hidden_dim = hidden_dim
+    self.dim = dim
+    self.variant = variant
 
+    self.expert = MOEExpert(
+      head_dim=self.head_dim,
+      hidden_dim=self.hidden_dim,
+      dim=self.dim,
+      variant=self.variant
+    )
+
+    self.router = layer_mlp(
+      dim=self.dim,
+      hidden_dim=self.hidden_dim
+    )
 
   @torch.inference_mode()
   def forward(self, x: torch.Tensor) -> torch.Tensor:
     """
     Forward pass through the MoE layer.
     """
-    pass
+    out_expert = self.expert(x)
+    return self.router(out_expert)
     
 
 class ShardInferenceState:
