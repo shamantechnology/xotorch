@@ -95,7 +95,7 @@ parser.add_argument("--wait-for-peers", type=int, default=0, help="Number of pee
 parser.add_argument("--chatgpt-api-port", type=int, default=52415, help="ChatGPT API port")
 parser.add_argument("--chatgpt-api-response-timeout", type=int, default=900, help="ChatGPT API response timeout in seconds")
 parser.add_argument("--max-generate-tokens", type=int, default=10000, help="Max tokens to generate in each request")
-parser.add_argument("--inference-engine", type=str, default=None, help="Inference engine to use (torch or dummy)")
+parser.add_argument("--inference-engine", type=str, default="torch", help="Inference engine to use (torch or dummy)")
 parser.add_argument("--disable-tui", action=argparse.BooleanOptionalAction, help="Disable TUI")
 parser.add_argument("--chat-tui", action="store_true", help="Enable terminal-based chat mode for token speed debugging")
 parser.add_argument("--run-model", type=str, help="Specify a model to run directly")
@@ -106,9 +106,6 @@ parser.add_argument("--node-id-filter", type=str, default=None, help="Comma sepa
 parser.add_argument("--interface-type-filter", type=str, default=None, help="Comma separated list of allowed interface types (only for UDP discovery)")
 parser.add_argument("--system-prompt", type=str, default=None, help="System prompt for the ChatGPT API")
 args = parser.parse_args()
-
-# if args.inference_engine != "dummy" and args.inference_engine != "torch":
-#   args.inference_engine = "torch"
 
 print(f"Selected inference engine: {args.inference_engine}")
 
