@@ -14,13 +14,7 @@ from xotorch.helpers import DEBUG
 import json
 import platform
 
-if platform.system().lower() == "darwin" and platform.machine().lower() == "arm64":
-  import mlx.core as mx
-  IS_APPLE = True
-else:
-  import numpy as mx
-  IS_APPLE = False
-
+import numpy as mx
 
 class GRPCPeerHandle(PeerHandle):
   def __init__(self, _id: str, address: str, desc: str, device_capabilities: DeviceCapabilities):
@@ -210,7 +204,7 @@ class GRPCPeerHandle(PeerHandle):
     proto_inference_state = node_service_pb2.InferenceState()
     other_data = {}
     for k, v in inference_state.items():
-      mx_array_type = mx.array if IS_APPLE else mx.ndarray
+      mx_array_type = mx.ndarray
       if isinstance(v, mx_array_type):
         np_array = np.array(v)
         tensor_data = node_service_pb2.Tensor(tensor_data=np_array.tobytes(), shape=list(np_array.shape), dtype=str(np_array.dtype))

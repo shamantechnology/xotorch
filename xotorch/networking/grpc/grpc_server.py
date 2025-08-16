@@ -12,11 +12,7 @@ from xotorch.inference.shard import Shard
 from xotorch.orchestration import Node
 import json
 
-if platform.system().lower() == "darwin" and platform.machine().lower() == "arm64":
-  import mlx.core as mx
-else:
-  import numpy as mx
-
+import numpy as mx
 
 class GRPCServer(node_service_pb2_grpc.NodeServiceServicer):
   def __init__(self, node: Node, host: str, port: int):
