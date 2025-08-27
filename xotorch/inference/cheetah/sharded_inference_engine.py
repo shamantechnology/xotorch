@@ -124,14 +124,20 @@ class CheetahInferenceEngine(InferenceEngine):
 
         self.state.input_pos = ttg.get_position_ids_from_padding_mask(padding_masks)
       else:
+        self.state.mask = torch.ones(
+          (1, 1, tklng, tklng),
+          dtype=torch.bool,
+          device=self.device
+        ).tril_()
+
         self.state.mask = torch.tril(torch.ones(
           total_response_length,
-          self.max_seq_len,
+          tokens.shape[-1],
           dtype=torch.bool,
           device=self.device,
         )).unsqueeze(0)
 
-        self.state.input_pos = torch.arange(0, total_response_length, device=self.device).unsqueeze(0)
+        self.state.input_pos = torch.arange(0, tklng, device=self.device).unsqueeze(0)
 
       return tokens
 
@@ -299,10 +305,7 @@ class CheetahInferenceEngine(InferenceEngine):
     self.model_path = await self.shard_downloader.ensure_shard(shard, self.__class__.__name__)
     self.model_config = load_model_config(self.model_path/"config.json")
 
-    if os.environ.get("XOTORCH_MAX_SEQ_LEN"):
-      self.max_seq_len = int(os.environ["XOTORCH_MAX_SEQ_LEN"])
-    else:
-      self.max_seq_len = self.model_config.get("max_seq_len", 1024)
+    self.max_seq_len = self.model_config.get("max_seq_len", 1024)
 
     # self.tokenizer = await _resolve_tokenizer(model_path)
     self.tokenizer = await _resolve_tokenizer(self.model_path)
