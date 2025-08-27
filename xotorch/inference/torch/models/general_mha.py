@@ -13,7 +13,7 @@ from torchtune.models.llama3_1._position_embeddings import Llama3ScaledRoPE
 from torchtune.models.qwen2._positional_embeddings import Qwen2RotaryPositionalEmbeddings
 from torchtune.modules import RotaryPositionalEmbeddings
 from xotorch.inference.shard import Shard
-from xotorch.inference.torch.models.llm_utils import (
+from xotorch.inference.llm_utils import (
   layer_mlp,
   ShardTransformerDecoder
 )

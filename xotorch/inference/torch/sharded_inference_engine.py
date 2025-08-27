@@ -21,7 +21,7 @@ from xotorch.download.shard_download import ShardDownloader
 from xotorch.inference.shard import Shard
 from xotorch.inference.tokenizers import _resolve_tokenizer
 from xotorch.helpers import DEBUG
-from xotorch.inference.torch.models.llm_utils import (
+from xotorch.inference.llm_utils import (
   load_model_config,
   load_model_weights_torchtune,
   ShardInferenceState

@@ -17,7 +17,7 @@ from transformers import AutoTokenizer
 from xotorch.inference.torch.models.general_mha import ShardedGeneralModel
 from xotorch.inference.shard import Shard
 
-from xotorch.inference.torch.models.llm_utils import (
+from xotorch.inference.llm_utils import (
   load_model_config,
   load_weights_torch,
   load_model_weights_torchtune

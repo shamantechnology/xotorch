@@ -22,7 +22,7 @@ from xotorch.inference.shard import Shard
 from xotorch.download.shard_download import ShardDownloader
 from xotorch.inference.inference_engine import InferenceEngine
 from xotorch.inference.tokenizers import _resolve_tokenizer
-from xotorch.inference.torch.models.llm_utils import (
+from xotorch.inference.llm_utils import (
   load_model_config,
   ShardInferenceState,
   HF_PRECISION_DTYPE_TO_STR
@@ -370,7 +370,10 @@ class CheetahInferenceEngine(InferenceEngine):
       self.cheetah_header["has_hidden_state"] = True
 
     # setup payload
-    header_bytes = json.dumps(self.cheetah_header).encode("utf-8")
+    json_header = json.dumps(self.cheetah_header)
+    if DEBUG >= 4:
+      print(f"Cheetah Header: {json_header}")
+    header_bytes = json_header.encode("utf-8")
     if hidden_state is None:
       payload = tokens.numpy(force=True).tobytes() + \
                 mask.numpy(force=True).astype(np.uint8).tobytes() + \
